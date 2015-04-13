@@ -41,15 +41,15 @@ class Link(object):
 
         Parameters
         ----------
-        parent: Monosaccharide or Substituent
-        child: Monosaccharide or Substituent
+        parent: :class:`Monosaccharide` or :class:`Substituent`
+        child: :class:`Monosaccharide` or :class:`Substituent`
         parent_position: int
             The position on the parent to attach to Defaults to -1
         child_position: int
             The position on the child to attach to. Defaults to -1
-        parent_loss: Composition or str
+        parent_loss: :class:`Composition` or str
             The elemental composition deducted from the parent when the bond is applied
-        child_loss: Composition or str
+        child_loss: :class:`Composition` or str
             The elemental composition deducted from the child when the bond is applied
         id: int
             A locally unique identifier within a graph. If |None|, uuid4 is used to generate one. Defaults to |None|
@@ -88,11 +88,9 @@ class Link(object):
         :meth:`Link.refund`
 
         '''
+        self.parent.composition -= (self.parent_loss or default_parent_loss)
 
-        self.parent.composition = self.parent.composition - \
-            (self.parent_loss or default_parent_loss)
-        self.child.composition = self.child.composition - \
-            (self.child_loss or default_child_loss)
+        self.child.composition -= (self.child_loss or default_child_loss)
         if self.is_substituent_link():
             self.parent.substituent_links[self.parent_position] = self
         else:
@@ -106,11 +104,11 @@ class Link(object):
 
         Parameters
         ----------
-        mol: Monosaccharide or Substituent
+        mol: :class:`Monosaccharide` or :class:`Substituent`
 
         Returns
         -------
-        Monosaccharide or Substituent
+        :class:`Monosaccharide` or :class:`Substituent`
 
         Raises
         ------
@@ -257,7 +255,7 @@ class Link(object):
     def __ne__(self, other):
         return not (self == other)
 
-    def break_link(self, refund=False, reorient_fn=None):
+    def break_link(self, refund=False):
         '''
         This function reverses :meth:`Link.apply`, removing the reference to :obj:`self` from
         both :attr:`parent` and :attr:`child`'s store of links. If ``refund`` is :const:`True`,
@@ -269,8 +267,6 @@ class Link(object):
         :class:`~.monosaccharide.Monosaccharide` or :class:`~.substituent.Substituent` parent
         :class:`~.monosaccharide.Monosaccharide` or :class:`~.substituent.Substituent` child
         '''
-        if reorient_fn is not None:
-            reorient_fn(self)
         if self.is_substituent_link():
             self.parent.substituent_links.pop(self.parent_position, self)
         else:
@@ -280,7 +276,7 @@ class Link(object):
             self.refund()
         return (self.parent, self.child)
 
-    def reconnect(self, refund=False, reorient_fn=None):
+    def reconnect(self, refund=False):
         '''
         The opposite of :meth:`Link.break_link`, add `self` to the appropriate places on
         :attr:`parent` and :attr:`child`
@@ -289,13 +285,8 @@ class Link(object):
         ----------
         refund: bool
             Should :meth:`Link.refund` be called? Defaults to |False|
-        reorient_fn: function
-            A function to be applied prior to reconnecting the bond. Defaults to |None|. If |None| is
-            passed, no action is taken
 
         '''
-        if reorient_fn is not None:
-            reorient_fn(self)
         if self.is_substituent_link():
             self.parent.substituent_links[self.parent_position] = self
         else:
@@ -313,10 +304,8 @@ class Link(object):
         Returns the lost elemental composition caused by :meth:`apply`. Adds back :attr:`parent_loss`
         and :attr:`child_loss` to the :attr:`composition` of :attr:`parent` and :attr:`child` respectively
         '''
-        self.parent.composition = self.parent.composition + \
-            (self.parent_loss or default_parent_loss)
-        self.child.composition = self.child.composition + \
-            (self.child_loss or default_child_loss)
+        self.parent.composition += (self.parent_loss or default_parent_loss)
+        self.child.composition += (self.child_loss or default_child_loss)
 
     def is_attached(self):
         '''

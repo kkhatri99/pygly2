@@ -5,18 +5,21 @@ from ..composition.structure_composition import substituent_compositions
 from .link import Link
 
 from ..composition import Composition, calculate_mass
-from ..utils import make_struct
 from ..utils.multimap import OrderedMultiMap
 
 
 class DerivatizePathway(object):
 
-    def __init__(self, can_nh_derivatize, is_nh_derivatizable):
+    def __init__(self, can_nh_derivatize=False, is_nh_derivatizable=False):
         self.can_nh_derivatize = can_nh_derivatize
         self.is_nh_derivatizable = is_nh_derivatizable
 
-    def __repr__(self):
+    def __repr__(self):  # pragma: no cover
         return "<DerivatizePathway {}>".format(self.__dict__)
+
+    @classmethod
+    def register(cls, name, can_nh_derivatize, is_nh_derivatizable):
+        derivatize_info[name.replace("-", "_")] = DerivatizePathway(can_nh_derivatize, is_nh_derivatizable)
 
 
 derivatize_info = {
@@ -25,7 +28,7 @@ derivatize_info = {
     "anhydro": DerivatizePathway(True, False),
     "bromo": DerivatizePathway(True, False),
     "chloro": DerivatizePathway(True, False),
-    "diphosphoethanolamine": DerivatizePathway(True, False),
+    "diphospho_ethanolamine": DerivatizePathway(True, False),
     "ethanolamine": DerivatizePathway(True, False),
     "ethyl": DerivatizePathway(True, False),
     "fluoro": DerivatizePathway(True, False),
@@ -37,7 +40,7 @@ derivatize_info = {
     "methyl": DerivatizePathway(True, False),
     "phosphate": DerivatizePathway(True, False),
     "phosphocholine": DerivatizePathway(True, False),
-    "phosphoethanolamine": DerivatizePathway(True, False),
+    "phospho_ethanolamine": DerivatizePathway(True, False),
     "pyrophosphate": DerivatizePathway(True, False),
     "pyruvate": DerivatizePathway(True, False),
     "succinate": DerivatizePathway(True, False),
@@ -45,13 +48,13 @@ derivatize_info = {
     "thio": DerivatizePathway(True, False),
     "triphosphate": DerivatizePathway(True, False),
 
-    "x_lactate": DerivatizePathway(True, False),
-    "r_carboxyethyl": DerivatizePathway(True, False),
-    "r_lactate": DerivatizePathway(True, False),
-    "r_pyruvate": DerivatizePathway(True, False),
-    "s_carboxyethyl": DerivatizePathway(True, False),
-    "s_lactate": DerivatizePathway(True, False),
-    "s_pyruvate": DerivatizePathway(True, False),
+    "(x)_lactate": DerivatizePathway(True, False),
+    "(r)_carboxyethyl": DerivatizePathway(True, False),
+    "(r)_lactate": DerivatizePathway(True, False),
+    "(r)_pyruvate": DerivatizePathway(True, False),
+    "(s)_carboxyethyl": DerivatizePathway(True, False),
+    "(s)_lactate": DerivatizePathway(True, False),
+    "(s)_pyruvate": DerivatizePathway(True, False),
 
     "n_acetyl": DerivatizePathway(True, True),
     "n_amidino": DerivatizePathway(True, True),
@@ -70,7 +73,7 @@ class Substituent(SubstituentBase):
     Represents a non-saccharide molecule commonly found bound to saccharide units.
     '''
 
-    def __init__(self, name, links=None, composition=None, id=None):
+    def __init__(self, name, links=None, composition=None, id=None, can_nh_derivatize=None, is_nh_derivatizable=None):
         if links is None:
             links = OrderedMultiMap()
         self.name = name
@@ -79,6 +82,15 @@ class Substituent(SubstituentBase):
             composition = substituent_compositions[self.name]
         self.composition = composition
         self.id = id or uuid4().int
+        try:
+            if can_nh_derivatize is is_nh_derivatizable is None:
+                self.can_nh_derivatize = derivatize_info[self.name].can_nh_derivatize
+                self.is_nh_derivatizable = derivatize_info[self.name].is_nh_derivatizable
+            else:
+                self.can_nh_derivatize = can_nh_derivatize or False
+                self.is_nh_derivatizable = is_nh_derivatizable or False
+        except KeyError:
+            raise KeyError("{} does not have defined derivatization rules. Please specify them.".format(self.name))
 
     @property
     def name(self):
@@ -174,7 +186,7 @@ class Substituent(SubstituentBase):
              parent_loss=parent_loss, child_loss=child_loss)
         return self
 
-    def drop_substiuent(self, position, substituent=None, refund=True):
+    def drop_substituent(self, position, substituent=None, refund=True):
         link_obj = None
         for substituent_link in self.links[position]:
             if substituent_link.child == substituent or substituent is None:
@@ -283,27 +295,3 @@ class Substituent(SubstituentBase):
             if link.is_parent(self):
                 continue
             yield (pos, link.parent)
-
-    @property
-    def can_nh_derivatize(self):
-        '''
-        Check :data:`derivatize_info` to see if this substituent type
-        can be derivatized an N-H terminal.
-
-        Returns
-        -------
-        bool
-        '''
-        return derivatize_info[self.name].can_nh_derivatize
-
-    @property
-    def is_nh_derivatizable(self):
-        '''
-        Check :data:`derivatize_info` to see if this substituent type
-        derivatizes an N-H terminal.
-
-        Returns
-        -------
-        bool
-        '''
-        return derivatize_info[self.name].is_nh_derivatizable

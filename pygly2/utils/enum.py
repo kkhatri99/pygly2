@@ -1,3 +1,6 @@
+import warnings
+
+
 class EnumValue(object):
     '''Represents a wrapper around an value with a name to identify it and
     more rich comparison logic. A value of an enumerated type'''
@@ -17,6 +20,8 @@ class EnumValue(object):
         try:
             if self.group != other.group:
                 return False
+            if self is other:
+                return True
             return self.value == other.value or self.names == other.names
         except AttributeError:
             return self.value == other or other in self.names
@@ -31,8 +36,8 @@ class EnumValue(object):
                                                        group_name=self.group.__name__,
                                                        value=self.value)
 
-    def add_name(self, name):
-        if name not in self.group:
+    def add_name(self, name, force=False):
+        if name not in self.group or force:
             self.names.add(name)
             self.group[name] = self
         else:
@@ -46,6 +51,8 @@ class EnumValue(object):
             except KeyError:  # pragma: no cover
                 pass
         raise KeyError("Could not resolve {} against {}".format(self, mapping))
+
+debug = False
 
 
 class EnumMeta(type):
@@ -73,10 +80,25 @@ class EnumMeta(type):
     '''
 
     def __new__(cls, name, parents, attrs):
+        if attrs.get('__doc__') is None:
+            attrs['__doc__'] = "EnumType"
         enum_type = type.__new__(cls, name, parents, attrs)
-        for label, value in attrs.items():
+        mapped = {}
+        attr_pairs = attrs.items()
+        for label, value in attr_pairs:
             if not label.startswith("__") or label == "mro":
-                setattr(enum_type, label, EnumValue(enum_type, label, value))
+                attrs.pop(label)
+                delattr(enum_type, label)
+                enum_value = EnumValue(enum_type, label, value)
+                if value in mapped:
+                    try:
+                        mapped[value].add_name(label)
+                        setattr(enum_type, label, mapped[value])
+                    except KeyError, e:
+                        print e
+                else:
+                    mapped[value] = enum_value
+                    setattr(enum_type, label, enum_value)
 
         return enum_type
 
@@ -89,6 +111,9 @@ class EnumMeta(type):
         return (k in self.__dict__) or (k in self.__dict__.values())
 
     def __getitem__(self, k):
+        if debug:
+            warnings.simplefilter("always")
+            warnings.warn("Search by %r" % k, stacklevel=2)
         return self.translate(k)
 
     def __setattr__(self, k, v):
@@ -129,7 +154,7 @@ class EnumMeta(type):
 
         if k in self.__dict__:
             return self.__dict__[k]
-        elif k in self:
+        elif k in self.__dict__.values():
             return self[self.name(k)]
         else:
             raise KeyError("Could not translate {0} through {1}".format(k, self))

@@ -1,6 +1,5 @@
 from collections import deque
 
-import pygly2
 from pygly2.structure import Monosaccharide, Glycan, constants, named_structures
 from pygly2.io import format_constants_map
 from pygly2.io.nomenclature import identity
@@ -54,6 +53,8 @@ def resolve_substituent(residue):
             part = "NGc"
         elif 'sulfate' == name:
             part = 'S'
+        else:
+            part = [t.title()[:2] for t in name.split("_")]
 
         # If there is a substituent after the first, successive ones are placed in parentheses
         if multi:

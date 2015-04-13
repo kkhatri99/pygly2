@@ -6,27 +6,19 @@
 Welcome to pygly2's documentation!
 ==================================
 
+
 Contents:
 
 .. toctree::
-   :maxdepth: 3
-   
-   structure/constants
-   structure/monosaccharide
-   structure/link
-   structure/substituent
-   structure/glycan
-   
-   composition
-   utils
-   
-   io/glycoct
-   io/linear_code
-   io/nomenclature/identity
-   io/nomenclature/synonyms
+   :maxdepth: 2
 
-   algorithms/subtree_search
-   algorithms/similarity
+   Quickstart <quickstart/quickstart>
+   
+   structure
+   composition
+   io
+   algorithms
+   utils
 
 
 Indices and tables

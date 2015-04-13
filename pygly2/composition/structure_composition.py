@@ -14,19 +14,36 @@ class CompositionRule(object):
         self.position_shifts.update(position_shifts)
 
     def __call__(self, position=-1):
-        return self.composition + Composition(self.position_shifts[position])
+        # Implicitly copies
+        return (self.composition + Composition(self.position_shifts[position]))
 
 
 class CompositionIndex(dict):
+
     def __getitem__(self, key):
         try:
             composition_dict = super(CompositionIndex, self).__getitem__(key)
         except KeyError:
-            composition_dict = {}
+            composition_dict = Composition()
             if do_warn:
                 warnings.warn("{key} could not be found. It may not have an explicit composition".format(key=key),
                               stacklevel=3)
-        return (composition_dict)
+        # Explicitly copies
+        return (composition_dict).clone()
+
+
+class CompositionRuleIndex(dict):
+
+    def __getitem__(self, key):
+        try:
+            rule = super(CompositionRuleIndex, self).__getitem__(key)
+        except KeyError:
+            rule = CompositionRule()
+            if do_warn:
+                warnings.warn("{key} could not be found. It may not have an explicit composition".format(key=key),
+                              stacklevel=3)
+        return (rule)
+
 
 # Monosaccharide Residue Compositions
 _monosaccharide_compositions = {
@@ -99,13 +116,10 @@ _modification_compositions = {
         "H": -2,
         "O": 1
     }, {1: {"H": 2}}),
-    "aldi": CompositionRule({
-        "H": 2
-    }),
     "keto": CompositionRule({"H": -2}),
 }
 
-modification_compositions = CompositionIndex(_modification_compositions)
+modification_compositions = CompositionRuleIndex(_modification_compositions)
 
 # Specified as composition deltas relative to the glycan structure
 _substituent_compositions = {

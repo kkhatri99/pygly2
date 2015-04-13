@@ -2,7 +2,7 @@ import logging
 from uuid import uuid4
 from itertools import chain
 
-from .constants import Anomer, Configuration, Stem, SuperClass, Modification, ReducingEnd, RingType
+from .constants import Anomer, Configuration, Stem, SuperClass, Modification, RingType
 from .substituent import Substituent
 from .link import Link
 from .base import SaccharideBase
@@ -10,6 +10,7 @@ from .base import SaccharideBase
 from ..io.format_constants_map import anomer_map, superclass_map
 from ..utils import invert_dict, make_counter, StringIO, identity as ident_op
 from ..utils.multimap import OrderedMultiMap
+from ..utils.enum import EnumValue
 from ..composition import Composition, calculate_mass
 from ..composition.structure_composition import monosaccharide_composition
 from ..composition.structure_composition import modification_compositions
@@ -20,24 +21,39 @@ superclass_map = invert_dict(superclass_map)
 logger = logging.getLogger(__name__)
 logger.setLevel("DEBUG")
 
+debug = True
 
-def get_standard_composition(monosaccharide):
+
+def _get_standard_composition(monosaccharide):
     '''Used to get initial composition for a given monosaccharide
-    ``Superclass`` and modifications
+    |Superclass| and modifications.
+
+    Used during initialization of a |Monosaccharide|.
 
     Parameters
     ----------
-    monosaccharide: Monosaccharide
+    monosaccharide: :class:`Monosaccharide`
         The |Monosaccharide| object to read attributes from
 
     Returns
     -------
-    Composition:
+    :class:`~pygly2.composition.composition.Composition`:
         The baseline composition from `monosaccharide.superclass` + `monosaccharide.modifications`
     '''
     base = monosaccharide_composition[monosaccharide.superclass]
-    for mod_pos, mod_val in monosaccharide.modifications.items():
-        base = base + modification_compositions[mod_val](mod_pos)
+    modifications = list(monosaccharide.modifications.items())
+    for mod_pos, mod_val in modifications:
+        # Don't set the reducing end here
+        if isinstance(mod_val, ReducedEnd):
+            monosaccharide.reducing_end = mod_val
+            continue
+        elif mod_val is Modification.aldi:
+            monosaccharide.reducing_end = True
+            continue
+        try:
+            base += modification_compositions[mod_val](mod_pos)
+        except:
+            base += mod_val.composition
     return base
 
 
@@ -48,7 +64,7 @@ def traverse(monosaccharide, visited=None, apply_fn=ident_op):
 
     Parameters
     ----------
-    monosaccharide: Monosaccharide
+    monosaccharide: :class:`Monosaccharide`
         Residue to start traversing from
     visited: set or None
         The collection of node ids to ignore, having already visited them. If |None|, it defaults
@@ -58,13 +74,14 @@ def traverse(monosaccharide, visited=None, apply_fn=ident_op):
 
     Yields
     -------
-    Monosaccharide
+    :class:`Monosaccharide`
     '''
     if visited is None:
         visited = set()
     yield apply_fn(monosaccharide)
     visited.add(monosaccharide.id)
-    for p, link in monosaccharide.links.items():
+    outnodes = sorted(list(monosaccharide.links.items()), key=lambda x: x[1][monosaccharide].order(), reverse=True)
+    for p, link in outnodes:
         child = link[monosaccharide]
         if child.id in visited:
             continue
@@ -78,7 +95,7 @@ def graph_clone(monosaccharide, visited=None):
 
     Parameters
     ----------
-    residue: Monosaccharide
+    residue: :class:`Monosaccharide`
         The root of the graph to clone
     visited: set or None
         The collection of node ids to ignore, having already visited them. If |None|, it defaults
@@ -86,7 +103,7 @@ def graph_clone(monosaccharide, visited=None):
 
     Returns
     -------
-    Monosaccharide:
+    :class:`Monosaccharide`:
         The root of a newly duplicated and identical residue graph
     '''
     clone_root = monosaccharide.clone(prop_id=True)
@@ -151,61 +168,74 @@ class Monosaccharide(SaccharideBase):
     ----------
     anomer: :class:`Anomer` or {'alpha', 'beta', 'uncyclized', 'x', 'missing', None}
         An entry of :class:`~pygly2.structure.constants.Anomer` that corresponds to the linkage type
-        of the carbohydrate backbone. Is an entry of a class based on :class:`EnumMeta`
+        of the carbohydrate backbone. Is an entry of a class based on :class:`Enum`
     superclass: :class:`SuperClass` or {'tri', 'tet', 'pen', 'hex', 'hep', 'oct', 'non' 'missing', 'x', None}
         An entry of :class:`~pygly2.structure.constants.SuperClass` that corresponds to the number of
         carbons in the carbohydrate backbone of the monosaccharide. Controls the base composition of the
         instance and the number of positions open to be linked to or modified. Is an entry of a class
-        based on :class:`EnumMeta`
+        based on :class:`Enum`
     configuration: :class:`Configuration` or {'d', 'l', 'x', 'missing', None}
-        An entry of :class:`~pygly2.structure.constants.Configuration` which corresponds to the optical
-        stereomer state of the instance. Is an entry of a class based on :class:`EnumMeta`. May possess
+        An entry of |Configuration| which corresponds to the optical
+        stereomer state of the instance. Is an entry of a class based on :class:`Enum`. May possess
         more than one value.
     stem: :class:`Stem` or {"gro", "ery", "rib", "ara", "all", "alt", "glc", "man", "tre", "xyl", "lyx", "gul", "ido", "gal", "tal", "thr", 'x', 'missing', None}
         Corresponds to the bond conformation of the carbohydrate backbone. Is an entry of a class based
-        on :class:`EnumMeta`. May possess more than one value.
+        on :class:`Enum`. May possess more than one value.
     ring_start: int or {0, -1, 'x', None}
-        The index of the carbon of the carbohydrate backbone that starts a ring. A value of :const:`-1`, :const:`'x'`, or
-        :const:`None` corresponds to an unknown start. A value of :const:`0` refers to a linear chain.
+        The index of the carbon of the carbohydrate backbone that starts a ring. A value of `-1`, `'x'`, or
+        |None| corresponds to an unknown start. A value of `0` refers to a linear chain.
     ring_end:  int or {0, -1, 'x', None}
-        The index of the carbon of the carbohydrate backbone that ends a ring. A value of :const:`-1`, :const:`'x'`, or
-        :const:`None` corresponds to an unknown ends. A value of :const:`0` refers to a linear chain.
+        The index of the carbon of the carbohydrate backbone that ends a ring. A value of `-1`, `'x'`, or
+        |None| corresponds to an unknown ends. A value of `0` refers to a linear chain.
     reducing_end: :class:`int`
         The index of the carbon which hosts the reducing end.
     modifications: |OrderedMultiMap|
-        The mapping of sites to :class:`~pygly2.structure.constants.Modification` entries. Directly modifies
-        the instance's :attr:`Monosaccharide.composition`
+        The mapping of sites to |Modification| entries. Directly modifies the instance's :attr:`composition`
     links: |OrderedMultiMap|
-        The mapping of sites to :class:`~pygly2.structure.link.Link` entries that refer to other :class:`Monosaccharide` instances
+        The mapping of sites to |Link| entries that refer to other |Monosaccharide| instances
     substituent_links: |OrderedMultiMap|
-            The mapping of sites to :class:`~pygly2.structure.link.Link` entries that refer to
-            :class:`~pygly2.structure.substituent.Substituent` instances.
+        The mapping of sites to |Link| entries that refer to
+        |Substituent| instances.
     composition: |Composition|
-        An instance of :class:`~pygly2.composition.composition.Composition` corresponding to the elemental composition
-        of ``self`` and its immediate modifications.
-
+        An instance of |Composition| corresponding to the elemental composition
+        of ``self`` and its immediate modifications. If not provided, this will be inferred
+        from field values.
+    reduced: ReducedEnd
+        An instance of ReducedEnd, or the value |True|, represents a reduced sugar. May be inferred
+        from `modifications` if "aldi" is present
     '''
 
     def __init__(self, anomer=None, configuration=None, stem=None,
                  superclass=None, ring_start=None, ring_end=None,
                  modifications=None, links=None, substituent_links=None,
-                 composition=None, id=None):
-        self.anomer = anomer
-        self.configuration = configuration
-        self.stem = stem
-        self.superclass = superclass
+                 composition=None, reduced=None, id=None, fast=False):
+
+        if modifications is None:
+            modifications = OrderedMultiMap()
+
+        if fast:
+            self._anomer = anomer
+            self._configuration = tuple(configuration)
+            self._stem = tuple(stem)
+            self._superclass = superclass
+        else:
+            self.anomer = anomer
+            self.configuration = configuration
+            self.stem = stem
+            self.superclass = superclass
+
         self.ring_start = ring_start
         self.ring_end = ring_end
-        self.modifications = OrderedMultiMap(
-        ) if modifications is None else modifications
+        self.modifications = modifications
         self.links = OrderedMultiMap() if links is None else links
         self.substituent_links = OrderedMultiMap() if substituent_links\
             is None else substituent_links
         self.id = id or uuid4().int
-        if composition is None:
-            composition = get_standard_composition(self)
-        self.composition = composition
         self._reducing_end = None
+        self.reducing_end = reduced
+        if composition is None:
+            composition = _get_standard_composition(self)
+        self.composition = composition
 
     @property
     def anomer(self):
@@ -221,7 +251,7 @@ class Monosaccharide(SaccharideBase):
 
     @configuration.setter
     def configuration(self, value):
-        if isinstance(value, tuple):
+        if isinstance(value, (tuple, list)):
             self._configuration = tuple(Configuration[v] for v in value)
         else:
             self._configuration = (Configuration[value],)
@@ -232,11 +262,9 @@ class Monosaccharide(SaccharideBase):
 
     @stem.setter
     def stem(self, value):
-        if isinstance(value, tuple):
+        if isinstance(value, (tuple, list)):
             self._stem = tuple(Stem[v] for v in value)
         else:
-            # if value not in Stem and value is not None:
-            #     raise Exception(value)
             self._stem = (Stem[value],)
 
     @property
@@ -245,11 +273,9 @@ class Monosaccharide(SaccharideBase):
 
     @superclass.setter
     def superclass(self, value):
-        # if value not in SuperClass and value is not None:
-        #     raise Exception(value)
         self._superclass = SuperClass[value]
 
-    def clone(self, prop_id=False):
+    def clone(self, prop_id=False, fast=True):
         '''
         Copies just this |Monosaccharide| and its |Substituent|s, creating a separate instance
         with the same data. All mutable data structures are duplicated and distinct from the original.
@@ -259,13 +285,15 @@ class Monosaccharide(SaccharideBase):
 
         Returns
         -------
-
         :class:`Monosaccharide`
 
         '''
         modifications = OrderedMultiMap()
         for k, v in self.modifications.items():
+            if isinstance(v, ReducedEnd):
+                continue
             modifications[k] = Modification[v]
+
         monosaccharide = Monosaccharide(
             superclass=self.superclass,
             stem=self.stem,
@@ -274,7 +302,9 @@ class Monosaccharide(SaccharideBase):
             ring_end=self.ring_end,
             modifications=modifications,
             anomer=self.anomer,
-            id=self.id if prop_id else None)
+            reduced=self.reducing_end.clone() if self.reducing_end is not None else None,
+            id=self.id if prop_id else None,
+            fast=fast)
         for pos, link in self.substituent_links.items():
             sub = link.to(self)
             dup = sub.clone()
@@ -285,6 +315,15 @@ class Monosaccharide(SaccharideBase):
 
     @property
     def ring_type(self):
+        """The size of the ring-shape of the carbohydrate, as computed
+        by ring_end - ring_start.
+
+        Returns
+        -------
+        :class:`EnumValue`:
+            The appropriate value of :class:`.RingType`
+        """
+
         try:
             diff = self.ring_end - self.ring_start
             if diff == 4:
@@ -294,33 +333,77 @@ class Monosaccharide(SaccharideBase):
             elif diff == 0:
                 return RingType.open
         except TypeError:
-            return RingType.x
+            pass
+        return RingType.x
 
     @property
     def reducing_end(self):
+        """Return the reducing end type of
+        `self` or |None| if `self` is not reduced. The reducing end value
+        can also be found in :attr:`modifications`.
+
+        If `Modification.aldi` is present, it will be converted into
+        an instance of :class:`.ReducedEnd` with default arguments.
+
+        Returns
+        -------
+        :class:`.ReducedEnd` or |None|
+        """
         if self._reducing_end is None:
-            for pos, mod in self.modifications.items():
-                if mod == ReducingEnd:
-                    self._reducing_end = pos
+            for pos, mod in list(self.modifications.items()):
+                if isinstance(mod, ReducedEnd):
+                    self._reducing_end = mod
+                    break
+                elif mod is Modification.aldi:  # pragma: no cover
+                    self.modifications.popv(Modification.aldi)
+                    self.reducing_end = ReducedEnd()
                     break
         return self._reducing_end
 
     @reducing_end.setter
     def reducing_end(self, value):
-        if value in {-1, 'x'}:
-            raise ValueError("Cannot set the reducing end to be indeterminate")
-        if value > self.superclass.value:
-            raise IndexError("Index out of bounds")
-        pos = self.reducing_end
-        if pos is not None:
-            self.drop_modification(pos, ReducingEnd)
-        self.add_modification(ReducingEnd, value)
+        """Sets the reducing end type of `self`.
 
-    def __getitem__(self, pos):
+        If `value` is |None|, then this residue is not reduced.
+        Else, if `value` ``is True``, then this residue's reducing end
+        is set to an instance of :class:`.ReducedEnd` with default parameters.
+        Else, this residue's reducing_end is set to `value`.
+
+        This process will scan :attr:`modifications` for a pre-existing `reducing_end`
+        value to replace.
+
+        Parameters
+        ----------
+        value: True, None, or :class:`.ReducedEnd`
+
+        """
+        red_end = self.reducing_end
+        if red_end is not None:
+            self.modifications.pop(1, red_end)
+        # Setting to None will un-reduce the sugar, but should not
+        # put a None in :attr:`modifications`
+        if value:
+            if value is True:
+                value = ReducedEnd()
+            self.modifications[1] = value
+            self._reducing_end = value
+        else:
+            self._reducing_end = value
+
+    def __getitem__(self, position):
+        '''
+        Gets the collection of alterations made to the carbohydrate
+        backbone at `position`. This queries :attr:`modifications`, :attr:`links`, and
+        :attr:`substituent_links`.
+
+        Returns
+        -------
+        :class:`dict`
+        '''
         return {
-            'modifications': self.modifications[pos],
-            'substituent_links': self.substituent_links[pos],
-            'links': self.links[pos]
+            'modifications': self.modifications[position],
+            'substituent_links': self.substituent_links[position],
+            'links': self.links[position]
             }
 
     def open_attachment_sites(self, max_occupancy=0):
@@ -346,9 +429,9 @@ class Monosaccharide(SaccharideBase):
 
         Returns
         -------
-        list:
+        :class:`list`:
             The positions open for binding
-        int:
+        :class:`int`:
             The number of bound but unknown locations on the backbone.
         '''
         slots = [0] * self.superclass.value
@@ -356,16 +439,12 @@ class Monosaccharide(SaccharideBase):
         for pos, obj in chain(self.modifications.items(),
                               self.links.items(),
                               self.substituent_links.items()):
-            if Modification.keto == obj or Modification.aldi == obj:
+            if obj == Modification.keto:
                 continue
             if pos in {-1, 'x'}:
                 unknowns += 1
             else:
                 slots[pos - 1] += 1
-
-        # reducing_end = self.reducing_end
-        # if reducing_end is not None:
-        #     slots[reducing_end - 1] -= 1
 
         open_slots = []
         can_determine_positions = unknowns > 0 or (self.ring_end in {-1, 'x'})
@@ -392,7 +471,7 @@ class Monosaccharide(SaccharideBase):
 
         Returns
         -------
-        int
+        int:
             The number of occupants at ``position``
 
         Raises
@@ -410,11 +489,8 @@ class Monosaccharide(SaccharideBase):
         n_occupants = len(self.links[position]) +\
             len(self.modifications[position]) +\
             len(self.substituent_links[position])
-        if Modification.keto in self.modifications[position] or\
-           Modification.aldi in self.modifications[position]:
+        if Modification.keto in self.modifications[position]:
             n_occupants -= 1
-        # if position == self.reducing_end:
-        #     n_occupants -= 1
         return n_occupants
 
     def add_modification(self, modification, position, max_occupancy=0):
@@ -436,24 +512,66 @@ class Monosaccharide(SaccharideBase):
         Raises
         ------
         IndexError
-            ``position`` exceeds the bounds set by :attr:`superfamily`.
+            ``position`` exceeds the bounds set by :attr:`superclass`.
         ValueError
             ``position`` is occupied by more than ``max_occupancy`` elements
 
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
         '''
         if self.is_occupied(position) > max_occupancy:
             raise ValueError("Site is already occupied")
-        self.composition = self.composition + \
-            modification_compositions[modification](position)
-        self.modifications[position] = Modification[modification]
+        if modification is Modification.aldi:
+            self.reducing_end = ReducedEnd()
+        else:
+            try:
+                self.composition += modification_compositions[modification](position)
+                self.modifications[position] = Modification[modification]
+            except:
+                self.composition += modification.composition
+                self.modifications[position] = modification
         return self
 
     def drop_modification(self, position, modification):
-        if position > self.superclass.value:
+        '''
+        Remove the `modification` at `position`
+
+        Parameters
+        ----------
+        position: int
+            The position to drop the modification from
+        modification: Modification
+            The Modification to remove.
+
+        Raises
+        ------
+        IndexError:
+            If `position` is not a valid carbohydrate backbone position
+
+        ValueError:
+            If `modification` is not found at `position`
+
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
+        '''
+        if position > self.superclass.value or position < 0 and position not in {'x', -1}:
             raise IndexError("Index out of bounds")
-        self.modifications.pop(position, modification)
-        self.composition = self.composition - \
-            modification_compositions[modification](position)
+        try:
+            self.modifications.pop(position, modification)
+        except IndexError:
+            raise ValueError("Modification {} not found at {}".format(modification, position))
+        if modification is Modification.aldi:
+            self.reducing_end = None
+        else:
+            try:
+                self.composition = self.composition - \
+                    modification_compositions[modification](position)
+            except:
+                self.composition = self.composition - modification.composition
         return self
 
     def add_substituent(self, substituent, position=-1, max_occupancy=0,
@@ -483,9 +601,15 @@ class Monosaccharide(SaccharideBase):
         Raises
         ------
         IndexError
-            ``position`` exceeds the bounds set by :attr:`superfamily`.
+            ``position`` exceeds the bounds set by :attr:`superclass`.
         ValueError
             ``position`` is occupied by more than ``max_occupancy`` elements
+
+
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
         '''
         if self.is_occupied(position) > max_occupancy:
             raise ValueError("Site is already occupied")
@@ -501,13 +625,42 @@ class Monosaccharide(SaccharideBase):
         return self
 
     def drop_substituent(self, position, substituent=None, refund=True):
-        if position > self.superclass.value:
+        '''
+        Remove the `substituent` at `position`.
+
+        If `substituent` is |None|, then the first substituent found at `position` is
+        removed.
+
+        Parameters
+        ----------
+        position: int
+            The position to drop the modification from
+        substituent: Substituent
+            The |Substituent| to remove. If |None|, the first substituent found at
+            `position` will be removed
+        refund: bool
+            Passed to :meth:`~.Link.break_link`
+
+        Raises
+        ------
+        IndexError:
+            If `position` is not a valid carbohydrate backbone position
+
+        ValueError:
+            If `substituent` is not found at `position`
+
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
+        '''
+        if position > self.superclass.value or position < 0 and position not in {-1, 'x'}:
             raise IndexError("Index out of bounds")
         if isinstance(substituent, basestring):
             substituent = Substituent(substituent)
         link_obj = None
         for substituent_link in self.substituent_links[position]:
-            if substituent_link.child.name == substituent.name or substituent is None:
+            if substituent is None or substituent_link.child.name == substituent.name:
                 link_obj = substituent_link
                 break
         if link_obj is None:
@@ -547,9 +700,15 @@ class Monosaccharide(SaccharideBase):
         Raises
         ------
         IndexError
-            ``position`` exceeds the bounds set by :attr:`superfamily`.
+            ``position`` exceeds the bounds set by :attr:`superclass`.
         ValueError
             ``position`` is occupied by more than ``max_occupancy`` elements
+
+
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
         '''
         if parent_loss is None:
             parent_loss = Composition(H=1)
@@ -565,7 +724,32 @@ class Monosaccharide(SaccharideBase):
         return self
 
     def drop_monosaccharide(self, position, refund=True):
-        if position > self.superclass.value:
+        '''
+        Remove the glycosidic bond at `position`, detatching a connected |Monosaccharide|
+
+        If there is more than one glycosidic bond at `position`, an error will be raised.
+
+        Parameters
+        ----------
+        position: int
+            The position to drop the modification from
+        refund: bool
+            Passed to :meth:`~.Link.break_link`
+
+        Raises
+        ------
+        IndexError:
+            If `position` is not a valid carbohydrate backbone position
+
+        ValueError:
+            If no |Link| or more than one |Link| is found at `position`
+
+        Returns
+        -------
+        :class:`Monosaccharide`:
+            `self`, for chain calls
+        '''
+        if position > self.superclass.value or position < 0 and position not in {-1, 'x'}:
             raise IndexError("Index out of bounds")
         link_obj = None
         if len(self.links[position]) > 1:
@@ -621,14 +805,18 @@ class Monosaccharide(SaccharideBase):
         conf_stem = ''.join("-{0}{1}".format(c.name, s.name)
                             for c, s in zip(self.configuration, self.stem))
         superclass = "-" + superclass_map[self.superclass]
+
         modifications = '|'.join(
             "{0}:{1}".format(k, v.name) for k, v in self.modifications.items())
+
         modifications = "|" + modifications if modifications != "" else ""
+        ring_start = self.ring_start if self.ring_start is not None else 'x'
+        ring_end = self.ring_end if self.ring_end is not None else 'x'
 
         # The complete monosaccharide residue line
         residue_str = residue_template.format(ix=monosaccharide_index, anomer=anomer, conf_stem=conf_stem,
                                               superclass=superclass, modifications=modifications,
-                                              ring_start=self.ring_start or 'x', ring_end=self.ring_end or 'x')
+                                              ring_start=ring_start, ring_end=ring_end)
         res = [residue_str]
         lin = []
         # Construct the substituent lines
@@ -674,6 +862,15 @@ class Monosaccharide(SaccharideBase):
         return flat
 
     def exact_ordering_equality(self, other, substituents=True):
+        '''
+        Performs equality testing between two monosaccharides where
+        the exact position (and ordering by sort) of links must to match between
+        the input |Monosaccharide| objects
+
+        Returns
+        -------
+        |bool|
+        '''
         if self._flat_equality(other):
             if substituents:
                 for a_sub, b_sub in zip(self.substituents(), other.substituents()):
@@ -762,6 +959,38 @@ class Monosaccharide(SaccharideBase):
     def __repr__(self):  # pragma: no cover
         return self.to_glycoct().replace("\n", ' ')
 
+    def __getstate__(self):
+        return self.__dict__
+
+    def __setstate__(self, state):
+        '''
+        Does some testing to upgrade outdated, but equivalent
+        modification models.
+        '''
+        self.anomer = state['_anomer']
+        self.superclass = state['_superclass']
+        self.stem = state['_stem']
+        self.configuration = state['_configuration']
+
+        self.ring_start = state['ring_start']
+        self.ring_end = state['ring_end']
+        self.id = state['id']
+
+        self.modifications = state['modifications']
+        self.links = state['links']
+        self.substituent_links = state['substituent_links']
+        self.composition = state["composition"]
+        reduced = state.get('_reducing_end', None)
+        # Make sure that if "aldi" is present, to replace it with
+        # the default ReducedEnd
+        if reduced is None:
+            if self.modifications.popv(Modification.aldi) is not None:
+                # Deduct the modification mass from the main composition
+                self.composition -= {"H": 2}
+                reduced = True
+        self._reducing_end = None
+        self.reducing_end = reduced
+
     def mass(self, substituents=True, average=False, charge=0, mass_data=None):
         '''
         Calculates the total mass of ``self``. If ``substituents=True`` it will include
@@ -775,7 +1004,7 @@ class Monosaccharide(SaccharideBase):
         charge: int, optional, defaults to 0
             If charge is non-zero, m/z is calculated, where m is the theoretical mass, and z is ``charge``
         mass_data: dict, optional
-            If mass_data is None, standard NIST mass and isotopic abundance data are used. Otherwise the 
+            If mass_data is None, standard NIST mass and isotopic abundance data are used. Otherwise the
             contents of mass_data are assumed to contain elemental mass and isotopic abundance information.
             Defaults to :const:`None`.
 
@@ -793,6 +1022,9 @@ class Monosaccharide(SaccharideBase):
             for link_pos, substituent_link, in self.substituent_links.items():
                 mass += substituent_link[self].mass(
                     average=average, charge=charge, mass_data=mass_data)
+        if self.reducing_end is not None:
+            mass += self.reducing_end.mass(
+                average=average, charge=charge, mass_data=mass_data)
         return mass
 
     def total_composition(self):
@@ -804,9 +1036,12 @@ class Monosaccharide(SaccharideBase):
         -------
         :class:`~pygly2.composition.Composition`
         '''
-        comp = self.composition
+        comp = self.composition.clone()
         for p, sub in self.substituents():
-            comp = comp + sub.total_composition()
+            comp += sub.total_composition()
+        red_end = self.reducing_end
+        if red_end is not None:
+            comp += red_end.total_composition()
         return comp
 
     def children(self):
@@ -854,3 +1089,222 @@ class Monosaccharide(SaccharideBase):
 
     def __iter__(self):
         return self.children()
+
+
+class ReducedEnd(object):
+    name = 'aldi'
+
+    def __init__(self, composition=None, substituents=None, valence=2, id=None):
+        self.composition = composition or Composition("H2")
+        self.links = substituents or OrderedMultiMap()
+        self.valence = valence
+        self.id = id or uuid4().int
+
+    def is_occupied(self, position):
+        '''
+        Checks to see if a particular backbone position is occupied by a or :class:`.Substituent`.
+
+        Parameters
+        ----------
+        position: int
+            The position to check for occupancy. Passing -1 checks for undetermined attachments.
+
+        Returns
+        -------
+        numeric:
+            The number of occupants at ``position``, or `float('inf')` if `position` exceeds :attr:`valence`
+        '''
+        if position > self.valence:
+            return float('inf')
+        else:
+            return len(self.links[position])
+
+    def add_substituent(self, substituent, position=-1, max_occupancy=0,
+                        child_position=1, parent_loss=None, child_loss=None):
+        '''
+        Adds a |Substituent| and associated |Link|
+        to :attr:`substituent_links` at the site given by ``position``. This new substituent is included when
+        calculating mass with substituents included
+
+        Parameters
+        ----------
+        substituent: str or Substituent
+            The substituent to add. If passed a |str|, it will be
+            translated into an instance of |Substituent|
+        position: int or 'x'
+            The location to add the |Substituent| link to :attr:`substituent_links`. Defaults to -1
+        child_position: int
+            The location to add the link to in `substituent`'s :attr:`links`. Defaults to -1. Substituent
+            indices are currently not checked.
+        max_occupancy: int, optional
+            The maximum number of items acceptable at ``position``. Defaults to :const:`1`
+        parent_loss: Composition or str
+            The elemental composition removed from ``self``
+        child_loss: Composition or str
+            The elemental composition removed from ``substituent``
+
+        Raises
+        ------
+        IndexError
+            ``position`` exceeds the bounds set by :attr:`superclass`.
+        ValueError
+            ``position`` is occupied by more than ``max_occupancy`` elements
+        '''
+        if self.is_occupied(position) > max_occupancy:
+            raise ValueError("Site is already occupied")
+        if child_loss is None:
+            child_loss = Composition("H")
+        if parent_loss is None:
+            parent_loss = Composition("H")
+        if isinstance(substituent, basestring):
+            substituent = Substituent(substituent)
+        Link(parent=self, child=substituent,
+             parent_position=position, child_position=child_position,
+             parent_loss=parent_loss, child_loss=child_loss)
+        return self
+
+    def drop_substituent(self, position, substituent=None, refund=True):
+        '''
+        Remove the `substituent` at `position`. 
+
+        If `substituent` is |None|, then the first substituent found at `position` is
+        removed. 
+
+        Parameters
+        ----------
+        position: int
+            The position to drop the modification from
+        substituent: Substituent
+            The |Substituent| to remove. If |None|, the first substituent found at
+            `position` will be removed
+        refund: bool
+            Passed to :meth:`~.Link.break_link`
+
+        Raises
+        ------
+        IndexError:
+            If `position` exceeds :attr:`valence`
+
+        ValueError:
+            If `substituent` is not found at `position`
+
+        Returns
+        -------
+        ReducedEnd:
+            `self` for chaining calls
+        '''
+        if position > self.valence:
+            raise IndexError("Index out of bounds")
+        if isinstance(substituent, basestring):
+            substituent = Substituent(substituent)
+        link_obj = None
+        for substituent_link in self.links[position]:
+            if substituent_link.child.name == substituent.name or substituent is None:
+                link_obj = substituent_link
+                break
+        if link_obj is None:
+            if substituent is not None:
+                msg = "No matching substituent found at {position}.".format(
+                    position=position)
+            else:
+                msg = "No substituents found at {position}.".format(
+                    position=position)
+            raise IndexError(msg)
+
+        link_obj.break_link(refund=refund)
+        return self
+
+    def mass(self, average=False, charge=0, mass_data=None):
+        '''
+        Calculates the total mass of ``self``.
+
+        Parameters
+        ----------
+        average: bool, optional, defaults to False
+            Whether or not to use the average isotopic composition when calculating masses.
+            When ``average == False``, masses are calculated using monoisotopic mass.
+        charge: int, optional, defaults to 0
+            If charge is non-zero, m/z is calculated, where m is the theoretical mass, and z is ``charge``
+        mass_data: dict, optional
+            If mass_data is None, standard NIST mass and isotopic abundance data are used. Otherwise the
+            contents of mass_data are assumed to contain elemental mass and isotopic abundance information.
+            Defaults to :const:`None`.
+
+        Returns
+        -------
+        :class:`float`
+
+        See also
+        --------
+        :func:`pygly2.composition.composition.calculate_mass`
+        '''
+        mass = calculate_mass(
+            self.composition, average=average, charge=charge, mass_data=mass_data)
+
+        for pos, link in self.links.items():
+            mass += link[self].mass(average=average, charge=charge, mass_data=mass_data)
+        return mass
+
+    def clone(self, prop_id=True):
+        """Make a deep copy of `self`.
+        
+        Parameters
+        ----------
+        prop_id: bool
+            Whether to copy over :attr:`id`.
+        
+        Returns
+        -------
+        ReducedEnd
+        """
+        result = ReducedEnd(
+            Composition(self.composition), substituents=None,
+            valence=self.valence, id=self.id if prop_id else None)
+        for position, link in self.links.items():
+            result.add_substituent(position, link.child.clone())
+        return result
+
+    def children(self):
+        '''
+        Returns an iterator over the :class:`Monosaccharide`s which are considered
+        the descendants of ``self``.
+        '''
+        for pos, link in self.links.items():
+            if link.is_child(self):
+                continue
+            yield (pos, link.child)
+
+    def total_composition(self):
+        '''
+        Computes the sum of the composition of `self` and each of its linked
+        :class:`~.substituent.Substituent`s
+
+        Returns
+        -------
+        :class:`~pygly2.composition.Composition`
+        '''
+        comp = self.composition
+        for pos, sub in self.children():
+            comp = comp + sub.total_composition()
+        return comp
+
+    def __repr__(self):  #pragma: no cover
+        rep = "<ReducedEnd {}>".format(self.total_composition())
+        return rep
+
+    def __eq__(self, other):
+        '''
+        Test for equality with `other`, with special handling for `EnumValue` comparisons
+        for dealing with legacy format objects. If compared to the string "aldi", returns |True|,
+        otherwise does deep comparison of composition and substituents.
+        '''
+        if other is None:
+            return False
+        elif isinstance(other, (int, EnumValue)):
+            return False
+        elif isinstance(other, str):
+            return other == self.name
+        return self.composition == other.composition and self.links == other.links
+
+    def __ne__(self, other):
+        return not self == other
