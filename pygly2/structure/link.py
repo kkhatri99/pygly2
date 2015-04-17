@@ -239,9 +239,13 @@ class Link(object):
         '''
         if (other is None or not isinstance(other, Link)):
             return False
-        res = (self.parent == other.parent)
+        res = self._flat_equality(other)
         if res:
-            res = (self.child == other.child)
+            res = (self.parent == other.parent)
+        return res
+
+    def _flat_equality(self, other):
+        res = (self.child == other.child)
         if res:
             res = (self.parent_position == other.parent_position)
         if res:
@@ -322,6 +326,16 @@ class Link(object):
             parent = self in self.parent.links[self.parent_position]
         child = self in self.child.links[self.child_position]
         return parent and child
+
+    def try_break_link(self, refund=False):
+        if self.is_attached():
+            return self.break_link(refund=refund)
+        return False
+
+    def try_apply(self):
+        if not self.is_attached():
+            return self.apply()
+        return False
 
     def __repr__(self):  # pragma: no cover
         parent_loss_str, child_loss_str = self._glycoct_sigils()
